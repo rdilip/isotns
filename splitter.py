@@ -4,38 +4,19 @@ disentangler is the same regardless of the tensor shape. The primary function
 one should import from this module is split; it calls a different variation of
 the same function depending on the shape of the input tensor T.
 
-I use the following index conventions.
+Lovely updated version as of 2019/10/11: Let's do what the DMRG toycodes did
+and have the PEPs be an array of five index tensors -- we just need to be 
+careful about the loops, but don't need to worry about figuring out what kind
+of tensors are on the boundary. Then we just deal with rank 4+1 tensors, which
+I denote by
+     4    
+     |    
+ 0---T---3
+    /|    
+   2 1    
 
-Duo (Two virtual legs, one physical leg):
-
-        1             0          1           1        
-        |             |          |            \      
-        |             |          |             \     
-        T---2         A          B----2     0---C---2
-       /             / \        /                    
-      /             /   \      /                     
-    0(p)           1     2    0(p)                   
-
-Triangular (three virtual legs, one physical leg):
-
-        2             0           2           1          
-        |             |           |            \         
-        |             |           |             \        
-   0----T----3        A      0----B----3     0---C---2   
-       /             / \         /                       
-      /             /   \       /                        
-     1(p)          1     2     1(p)                      
-
-Pentagonal (five virtual legs, one physical leg):
-
-         3              0              3     1            
-         |              |             /       \           
-         |              |            /         \         
-     0---T---4          A       0---B---4   0---C---2
-        /|\            / \         /|           |             
-       / | \          /   \       / |           |       
-     2p  1  5        1     2     2p 1           3       
- 
+I need to deal with the pentagonal ones as well, but we shouldn't have to worry
+about boundary conditions as much. I think.
 """
 
 import numpy as np
@@ -45,91 +26,49 @@ from misc import *
 import warnings
 from entropy import S2_disentangler
 
-def unzip_tri(T):
-    """ This function accepts a rank 4 tensor with three virtual legs and one
-    physical leg, and "unzips" it into a tripartite state. One can then find
-    a disentangler to minimize the entropy across these states (the moses move).
+def unzip_quad(T):
+    """ This is really the only unzipper you need, because you don't want to have
+    to deal with finite boundary conditions. 
 
-        0           2           1                 2      
-        |           |            \                |      
-        |           |             \               |      
-        A      0----B----3     0---C---2     0----T----3
-       / \         /                             /       
-      /   \       /                             /        
-     1     2     1(p)                          1(p)      
-                                  
-                                  
-    Parameters
-    ----------
-    T: A rank 4 tensor. Indices should be as outlined above.
-
-    Returns
-    ----------
-    ABC: A list of tensors A, B, and C. 
+         4            2              3          2       
+         |            |             /            \                     
+     0---T---3        A        0---B---4      0---C---1                    
+        /|           / \          /|                 
+       2 1          1   0        2 1                                               
     """
-    T, pipeT = group_legs(T, [[0,1],[2,3]])
-    # Split T into two tensors with SVD. Store the left tensor as 
-    # B, after splitting the leg in two (flooring the square root)
-    X, Y, Z = la.svd(T, full_matrices = False)
-    keep_dim_0, keep_dim_1 = get_closest_factors(len(Y))
-    B = X.reshape((X.shape[0], keep_dim_0 * keep_dim_1))
 
-    pipeB = change_pipe_shape(pipeT, 1, (keep_dim_0, keep_dim_1))
-    B = ungroup_legs(B, pipeB)
-    # Now split the right most tensor vertically
-    right_shape = pipeT[1][1]
-    R = np.reshape(np.diag(Y) @ Z, (keep_dim_0, keep_dim_1,
-                  right_shape[0], right_shape[1]))
+    T_, pipeT = group_legs(T, [[0,1,2],[4,3]])
+    B, R = la.qr(T_)
+    dim_up, dim_down = get_closest_factors(B.shape[1])
+    B = B.reshape(*pipeT[1][0], dim_up, dim_down)
 
-    R, pipeR = group_legs(R, [[1,3],[0,2]]) 
-    C, A = la.qr(R)
-    R = ungroup_legs(C@A, pipeR)
-
-    C = C.reshape(keep_dim_1, right_shape[1], C.shape[1]).transpose([0,2,1])
-    A = A.reshape(A.shape[0], keep_dim_0, right_shape[0]).transpose([2,1,0])
+    R = R.reshape(dim_up, dim_down, *pipeT[1][1])
+    R_, pipeR = group_legs(R, [[1,3],[0,2]]) # Might be a bug cause
+    C, A = la.qr(R_)
+    C = C.reshape(*pipeR[1][0], C.shape[1])
+    A = A.reshape(A.shape[0], *pipeR[1][1])
     return([A,B,C])
 
 def unzip_pent(T):
-    """ Unzips a rank-6 tensor (counting one physical leg) by grouping  legs
-    and calling unzip_tri()
+    """ Note: The pentagonal tensors are temporary anyway...so I don't think
+    there's anything wrong with having a slightly odd index convention 
 
-
-         3              0              3     1            
-         |              |             /       \           
+         5              2             3       3            
          |              |            /         \         
      0---T---4          A       0---B---4   0---C---2
-        /|\            / \         /|           |       
-       / | \          /   \       / |           |       
-     2p  1  5        1     2     2p 1           3       
+        /|\            / \         /|            \       
+      2p 1 3          1   0      2p 1             1     
+
 
     """
-    warnings.warn("This function is out of date. Are you sure you want to"\
-            + " use it?", DeprecationWarning, stacklevel=2)
-    T_tri, pipeT = group_legs(T, [[0,1],[2],[3],[4,5]])
+    T_quad, pipeT = group_legs(T, [[0],[1],[2],[3,4],[5]])
     perm, shape = pipeT
-    A, B, C = unzip_tri(T_tri)
-    # No reshaping for A
-    B = B.reshape((*shape[0], *B.shape[1:])).transpose([0, 2, 3, 4, 1])
-    C = C.reshape((*C.shape[:2], *shape[3]))
-    return([A,B,C])
-
-def contract_pent_split(A,B,C):
-    """ Congracts A,B,C where the output tensor T is pentagonal """
-    T = np.tensordot(A, C, [2,1])
-    T = np.tensordot(B,T,[[3,4],[1,2]])
-    return(T)
-
-def contract_tri_split(A,B,C):
-    """ Contracts tensors A, B, and C. Useful for debugging """
-    tmp = np.tensordot(C, A, [1,2]).transpose([0,2,1,3])
-    return(np.tensordot(B, tmp, [[2,3],[3,0]]))
-
-def contract_duo_split(A,B,C):
-    """ Contracts tensors A,B,C where the result has two virtual
-    indices """
-    T = np.tensordot(A, C, [2,1])
-    T = np.tensordot(B, T, [[1,2],[1,2]])
-    return(T)
+    A,B,C = unzip_quad(T_quad)
+    # Only one that needs to be reshaped is C
+    T_ = contract_quad(A,B,C)
+    T_ = T_.reshape(*T_.shape[:3], *shape[3], T_.shape[4])
+    C = C.reshape(C.shape[0], *shape[3], C.shape[2])
+    return(A,B,C)
 
 def split(T):
     """ Splits a tensor T, performs disentangling using second Renyi entropy.
@@ -148,6 +87,12 @@ def split(T):
         # Adding a trivial leg
         [A,B,C] = unzip_tri(T.reshape((1, *T.shape)))
         ttype = 2
+    elif T.ndim == 4 + 1:
+        T, pipeT = group_legs(T, [[0,1,2],[3,4]])
+        Q, R = la.qr(T)
+        Q = Q.reshape((*pipeT[1][0], Q.shape[1]))
+        R = R.reshape(R.shape[0], *pipeT[1][1])
+        return([Q,R])
     else:
         raise ValueError("T has an invalid numebr of legs.")
     theta = np.tensordot(A, C, [2,1])
@@ -175,6 +120,15 @@ def split(T):
         B = B.reshape(B.shape[1:])
     return(A,B,C)
 
+# Debugging
+def _contract_pent(A,B,C):
+    T = np.tensordot(B, C, [4,0])
+    T = np.tensordot(T, A, [[3,6],[1,0]])
+    return(T)
 
-
+def _contract_quad(A,B,C):
+    """ Debugger, contracts A B C to get T """
+    T = np.tensordot(B, C, [4,0])
+    T = np.tensordot(T, A, [[3,5],[1,0]])
+    return(T)
 
