@@ -1,5 +1,9 @@
-""" Miscellaneous functions for various tensor operations """
+""" Miscellaneous functions for various tensor operations."""
+# TODO Make a general MPS class; a lot of these are functions that specifically
+# to an MPS.
 import numpy as np
+import scipy.linalg as la
+import warnings
 import itertools
 
 def group_legs(T, legs):
@@ -51,15 +55,17 @@ def ungroup_legs(T, pipe):
     ----------
     T_: The original tensor
     """
-
     perm, old_shape = pipe
     if (len(old_shape) != T.ndim):
         raise ValueError("Dimensions of shape and tensor must match")
     shape = []
     
     for i in range(len(old_shape)):
-        if len(old_shape[i]) == 1: shape.append(old_shape[i][0])
-        else: shape.extend(old_shape[i])
+        if len(old_shape[i]) == 1:
+            shape.append(T.shape[i])
+        else: 
+            shape.extend(old_shape[i])
+
     T_ = np.reshape(T, shape)
     T_ = T_.transpose(inverse_transpose(perm))
     return(T_)
@@ -69,7 +75,8 @@ def change_pipe_shape(pipe, leg, new_shape):
     (for example, SVD and truncation) then this function changes the shapes in 
     the pipe so we can use the ungroup function easily. (This is fairly trivial,
     but I keep forgetting the order of the elements in the pipe """
-
+    warnings.warn("Don't use this. Messy solution to a nonexistent problem",\
+                    DeprecationWarning)
     shape = []
     for i in range(len(pipe[1])):
         if i != leg: shape.append(pipe[1][i])
@@ -91,5 +98,57 @@ def inverse_transpose(perm):
         inv[perm[i]] = int(i)
     return(inv)
 
+def mps_invert(Psi):
+    """ Inverts an MPS. If we assume that the last two legs are the only virtual
+    ones, then we just have to flip those """
+    num_p = Psi[0].ndim - 2
+    return([psi.transpose(list(range(num_p)) + [-1,-2]) for psi in Psi[::-1]])
+
+def operator_invert(ops):
+    """ Flips a list of two-site operators. Transposes each individual operator, 
+    so methods that sweep along one direction can be easily flipped. """ 
+    return([op.transpose([1,0,3,2]) for op in ops])
+
+def svd(A, full_matrices = False):
+    """ Robust version of svd """
+    try:
+        return(la.svd(A, full_matrices = full_matrices))
+    except np.linalg.linalg.LinAlgError:
+        warnings.warn("SVD with LAPACK driver 'gesdd' failed. Using 'gesvd'",\
+                      stacklevel=2)
+        return(la.svd(A, full_matrices = full_matrices, lapack_driver='gesvd'))
+
+def svd_trunc(A, trunc_params = None):
+    """ Performs a truncated SVD. This SVD function is also robust -- if there
+    is an error while using the iterative scipy methods it directly calls
+    the LAPACK cgsvd method. 
+    Parameters
+    ---------
+    A: Matrix to perform SVD on.
+
+    trunc_params: Dictionary of trunc_params. chi_max is the largest bond
+    dimension. p_trunc is the "total probability" that we are discarding -- 
+    the sum of all singualr values squared greater than the cut. 
+    
+    Returns
+    ---------
+    U, SV: U @ S @ V.T = A
+    """
+    if trunc_params is None:
+        trunc_params = {}
+    U, S, V = svd(A, full_matrices=False)
+    nrm = np.linalg.norm(S)
+
+    p_trunc = trunc_params.get("p_trunc", 0.0)
+    chi_max = trunc_params.get("chi_max", len(S))
+    if p_trunc > 0.0:
+        eta = np.sum(nrm**2 - np.cumsum(S**2) > p_trunc) + 1
+        eta_new = min((eta, chi_max))
+    else:
+        eta_new = chi_max
+
+    nrm_t = np.linalg.norm(S[:eta_new])
+    A = U[:, :eta_new]
+    return(A, S[:eta_new], V[:eta_new, :], nrm_t)
 
 

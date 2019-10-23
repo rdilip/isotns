@@ -26,13 +26,24 @@ from misc import *
 import warnings
 from entropy import S2_disentangler
 
+warnings.warn("This is an old version", DeprecationWarning)
+
+
+def unzip(T):
+    if T.ndim == 4 + 1:
+        return(unzip_quad(T))
+    elif T.ndim == 5 + 1:
+        return(unzip_pent(T))
+    else:
+        raise ValueError("Input tensor must be quad or pentagonal")
+
 def unzip_quad(T):
     """ This is really the only unzipper you need, because you don't want to have
     to deal with finite boundary conditions. 
 
          4            2              3          2       
          |            |             /            \                     
-     0---T---3        A        0---B---4      0---C---1                    
+     0---T---3        A        0---B---4      0---C---1           
         /|           / \          /|                 
        2 1          1   0        2 1                                               
     """
@@ -50,9 +61,7 @@ def unzip_quad(T):
     return([A,B,C])
 
 def unzip_pent(T):
-    """ Note: The pentagonal tensors are temporary anyway...so I don't think
-    there's anything wrong with having a slightly odd index convention 
-
+    """ Uses the unzip_quad function to unzip a pentagonal wavefunction 
          5              2             3       3            
          |              |            /         \         
      0---T---4          A       0---B---4   0---C---2
@@ -65,34 +74,59 @@ def unzip_pent(T):
     perm, shape = pipeT
     A,B,C = unzip_quad(T_quad)
     # Only one that needs to be reshaped is C
-    T_ = contract_quad(A,B,C)
-    T_ = T_.reshape(*T_.shape[:3], *shape[3], T_.shape[4])
     C = C.reshape(C.shape[0], *shape[3], C.shape[2])
     return(A,B,C)
 
+def combine_col_wavefn(zero_col, one_col):
+    """ Combines a zero column wavefunction and the adjacent one column
+    wavefunction 
+    
+    0 col                     1 col                      
+         3                         4                          
+         |                         |                          
+    0 ---C--- 2                0---T---3                           
+         |                        /|                          
+         1                       2 1                          
+
+    """
+    if len(zero_col) != len(one_col):
+        raise ValueError("Must have same number of zero column and one" +\
+                         " column tensors")
+    for i in range(zero_col):
+        C = zero_col[i]
+        T = one_col[i]
+        comb = np.tensordot(C, T, [2,0])
+        comb, pipe_comb = group_legs(comb, [[0],[1,3],[4],[5],[2,6]])
+    return(comb)
+
+def get_col(A, k):
+    """ Returns the kth column of a 2D list A """
+    return([x[k] for x in A])
+
+def replace_col(A, v, k):
+    """ Replaces the kth column of A with the vector v """
+    if len(A) != len(v):
+        raise ValueError("Length of vector must be equal to number of rows")
+    if k >= len(A[0]):
+        raise ValueError("Not enough columns")
+    for i in range(len(A)):
+        A[i][k] = v[i]
+    return(A)
+
 def split(T):
+
     """ Splits a tensor T, performs disentangling using second Renyi entropy.
     The variable ttype indicates the number of virtual legs of the tensor
     being split.
     """
+    raise Exception("lol this whole function is useless right now don't even try")
     ttype = None
-    if T.ndim == 3 + 1:
-        [A,B,C] = unzip_tri(T)
-        ttype = 3
+    if T.ndim == 4 + 1:
+        [A,B,C] = unzip_quad(T)
+        ttype = 4
     elif T.ndim == 5 + 1:
-        T, pipeT = group_legs(T, [[0,1],[2],[3],[4,5]])
-        [A,B,C] = unzip_tri(T)
+        [A,B,C] = unzip_pent(T)
         ttype = 5
-    elif T.ndim == 2 + 1:
-        # Adding a trivial leg
-        [A,B,C] = unzip_tri(T.reshape((1, *T.shape)))
-        ttype = 2
-    elif T.ndim == 4 + 1:
-        T, pipeT = group_legs(T, [[0,1,2],[3,4]])
-        Q, R = la.qr(T)
-        Q = Q.reshape((*pipeT[1][0], Q.shape[1]))
-        R = R.reshape(R.shape[0], *pipeT[1][1])
-        return([Q,R])
     else:
         raise ValueError("T has an invalid numebr of legs.")
     theta = np.tensordot(A, C, [2,1])
@@ -131,4 +165,3 @@ def _contract_quad(A,B,C):
     T = np.tensordot(B, C, [4,0])
     T = np.tensordot(T, A, [[3,5],[1,0]])
     return(T)
-

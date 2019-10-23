@@ -7,7 +7,8 @@ from scipy.sparse.linalg import eigsh
 import sys
 import scipy.sparse.linalg.eigen.arpack as arp
 from scipy.linalg import svd
-from MPS import *
+from rd_mps import *
+from rd_model import *
 # For debugging
 
 
@@ -125,50 +126,7 @@ class H_eff(scipy.sparse.linalg.LinearOperator):
         
         return(state.reshape(self.shape[0]))
     
-    
-class TFI:
-    """ Class for a transverse field ising model """
-    def __init__(self, L, g, J, bc="finite"):
-        assert(bc == "finite" or bc == "infinite")
-        self.bc = bc
-        self.g = g
-        self.J = J
-        self.d = 2
-        sx = np.array([[0,1],[1,0]])
-        sy = np.array([[0, -1.0j],[1.0j, 0]])
-        sz = np.array([[1.0, 0.0],[0.0, -1.0]])
-        idn = np.eye(2)
-        self.L = L
-        
-        self.Ws = []
-        for i in range(L):
-            w = np.zeros((3, 3, self.d, self.d), dtype = np.float)
-            w[0,0] = w[2,2,:,:] = idn
-            w[0,1] = sx
-            w[0,2] = -g * sz
-            w[1,2] = -J * sx
-            self.Ws.append(w)
-            
-    def get_H_bonds(self):
-        """ Returns a list of local operators corresponding to TFI model. """
-        num_bonds = (self.L if self.bc == "infinite" else self.L - 1)
-        sx = np.array([[0,1],[1,0]])
-        sz = np.array([[1.0, 0.0],[0.0, -1.0]])
-        idn = np.eye(2)
-        
-        ops = []
-        
-        for site in range(num_bonds):
-            gL = gR = 0.5 * self.g
-            if self.bc == "finite":
-                if site == 0: gL = self.g
-                if site == self.L - 2: gR = self.g
-            H_local = -self.J * np.kron(sx, sx) - gL * np.kron(sz, idn) - gR * np.kron(idn, sz)
-            ops.append(np.reshape(H_local, [self.d] * 4))
 
-        self.H_bonds = ops
-        return(ops)
-    
 if __name__ == '__main__':
     L = 10
     J = 1.0
@@ -180,18 +138,17 @@ if __name__ == '__main__':
     sz = [[1,0],[0,-1]]
 
     psi = get_FM_MPS(L, d)
-    tfi_model = TFIMPO(L, g, J)
+    tfi_model = TFI(L, g, J)
 
     dmrg = DMRG(psi, tfi_model, chi_max)
 
-    ops = tfi_model.get_hamiltonian_local_op()
+    ops = tfi_model.get_H_bonds()
     for i in range(10):
         dmrg.sweep()
-        psi = dmrg.MPS
+        psi = dmrg.psi
         print(i, np.sum(psi.get_bond_exp_val(ops)))
     ops_x = [sx for i in range(L)]
     ops_z = [sz for i in range(L)]
 
-    print("Bond dimensions: {0}".format(psi.get_chi()))
     print("Magnetization in x: {0}".format(round(np.sum(psi.get_site_exp_val(ops_x)), 5)))
     print("Magnetization in z: {0}".format(round(np.sum(psi.get_site_exp_val(ops_z)), 5)))
