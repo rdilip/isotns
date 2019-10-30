@@ -4,7 +4,9 @@
 import numpy as np
 from misc import *
 import scipy.linalg as la
+import warnings
 
+warnings.warn("This module is deprecated. Use new_splitter.py", DeprecationWarning)
 def get_E2(theta, U):
     Utheta = np.tensordot(theta, U, [[1,2],[0,1]]).transpose([0,2,3,1])
     E2 = np.tensordot(Utheta, Utheta, [[2,3],[2,3]])
@@ -24,4 +26,3 @@ def S2_disentangler(theta, Ui, num_iter):
         E2 = ungroup_legs(E2, pipeE)
         Ui = U_next
     return(U_next)
-

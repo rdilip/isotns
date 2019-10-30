@@ -38,8 +38,10 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
     
     # How much are we throwing away by not using get_closest_factors()?
     # dL, dR = get_closest_factors(d)
+    tp = dict(p_trunc = 0.0, chi_max = dL * dR)
 
-    X, y, Z, nrm_t = svd_trunc(psi.reshape((d, mL * mR)), trunc_params)
+    X, y, Z, info = svd_trunc(psi.reshape((-1, mL * mR)), tp)
+    h_err = info["p_trunc"]
     A = X
     theta = (Z.T * y).T
     D2 = len(y)
@@ -52,16 +54,16 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
             rho = np.tensordot(psi, psi.conj(), axes = [[0,2],[0,2]])
             e, u = la.eigh(rho)
             u = u[:, -dL:] # dL largest eigenvalues
-            psi = np.tensordot(psi, u, [1,0]).transpose([0,2,1])
+            psi = np.tensordot(psi, u.conj(), [1,0]).transpose([0,2,1])
 
         if mR > dR:
             rho = np.tensordot(psi, psi.conj(), axes = [[0,1],[0,1]])
             e, u = la.eigh(rho)
             u = u[:, -dR:] 
-            psi = np.tensordot(psi, u, [2,0])
+            psi = np.tensordot(psi, u.conj(), [2,0])
 
         psi /= la.norm(psi)
-        u, s, v, nrm = svd_trunc(psi.reshape(D2, D2), trunc_params)
+        u, s, v = svd(psi.reshape(D2, D2))
         # I'm not sure we can do this.
         # psi has shape D2 x mL x mR, which we've truncated to D2 x dL x dR.
         # Then it seems like dL x dR should be D2, but D2 is the number of
@@ -83,13 +85,15 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
 
     # Second splitting
     theta, pipetheta = group_legs(theta, [[0,1],[2,3]])
-    X, s, Z, nrm = svd_trunc(theta) # TODO insert trunc params
+    X, s, Z, info = svd_trunc(theta) # TODO insert trunc params
+    v_err = info["p_trunc"]
     S = np.reshape(X, (dL, mL, len(s)))
     S = S * s
 
     B = np.reshape(Z, (len(s), dR, mR))
+    B = B.transpose([1,0,2])
 
-    return(A, S, B)
+    return(A, S, B, h_err + v_err) # Returns sum of errors
 
 def U2(psi):
     """ Calculates the 2-renyi entropy of a wavefunction psi. Returns the 

@@ -2,9 +2,11 @@
 # TODO Make a general MPS class; a lot of these are functions that specifically
 # to an MPS.
 import numpy as np
+import scipy as sp
 import scipy.linalg as la
 import warnings
 import itertools
+import pickle
 
 def group_legs(T, legs):
     """ Function to group legs of a tensor together.
@@ -65,7 +67,7 @@ def ungroup_legs(T, pipe):
             shape.append(T.shape[i])
         else: 
             shape.extend(old_shape[i])
-
+    
     T_ = np.reshape(T, shape)
     T_ = T_.transpose(inverse_transpose(perm))
     return(T_)
@@ -107,7 +109,7 @@ def mps_invert(Psi):
 def operator_invert(ops):
     """ Flips a list of two-site operators. Transposes each individual operator, 
     so methods that sweep along one direction can be easily flipped. """ 
-    return([op.transpose([1,0,3,2]) for op in ops])
+    return([op.transpose([1,0,3,2]) for op in ops[::-1]])
 
 def svd(A, full_matrices = False):
     """ Robust version of svd """
@@ -134,6 +136,7 @@ def svd_trunc(A, trunc_params = None):
     ---------
     U, SV: U @ S @ V.T = A
     """
+    trunc_info = {}
     if trunc_params is None:
         trunc_params = {}
     U, S, V = svd(A, full_matrices=False)
@@ -142,13 +145,82 @@ def svd_trunc(A, trunc_params = None):
     p_trunc = trunc_params.get("p_trunc", 0.0)
     chi_max = trunc_params.get("chi_max", len(S))
     if p_trunc > 0.0:
-        eta = np.sum(nrm**2 - np.cumsum(S**2) > p_trunc) + 1
-        eta_new = min((eta, chi_max))
+        eta = np.count_nonzero(nrm**2 - np.cumsum(S**2) > p_trunc) + 1
+        eta_new = np.min((eta, chi_max))
     else:
         eta_new = chi_max
 
     nrm_t = np.linalg.norm(S[:eta_new])
-    A = U[:, :eta_new]
-    return(A, S[:eta_new], V[:eta_new, :], nrm_t)
+    trunc_info["p_trunc"] = nrm**2 - nrm_t**2
+    trunc_info["nrm_t"] = nrm_t
+    trunc_info["eta"] = eta_new
+    return(U[:, :eta_new], S[:eta_new], V[:eta_new, :], trunc_info)
 
+# MPS and MPO manipulations
+
+def mps_group_legs(Psi, axes = 'all'):
+    """ Given an MPS with a high number of physical legs with B tensors, group
+    the physical legs according to axes = [[l1, l2], [l3]]... As usual, for rank
+    n tensors, the first n - 2 legs are considered to be physical."""
+
+    if axes == 'all':
+        axes = [list(range(Psi[0].ndim - 2))]
+
+    Psi_ = []
+    pipes = []
+    for j in range(len(Psi)):
+        ndim = Psi[j].ndim
+        p, pipe = group_legs(Psi[j], axes + [[ndim - 2], [ndim - 1]])
+        Psi_.append(p)
+        pipes.append(pipe)
+    return(Psi_, pipes)
+
+def mps_ungroup_legs(Psi, pipes):
+    """ Returns an MPS that was grouped using mps_group_legs """ 
+    return([ungroup_legs(Psi[i], pipes[i]) for i in range(len(Psi))])
+
+def canonical_form(Psi, form = 'A', normalize = False):
+    """ Puts an MPS into either A or B form (can have arbitrarily many physical
+    legs. """
+    assert form in ['A', 'B']
+    Psi, pipes = mps_group_legs(Psi, axes = 'all')
+    if form == 'B':
+        Psi = [psi.transpose([0,2,1]) for psi in Psi[::-1]]
+
+    L = len(Psi)
+    T = Psi[0]
+    for j in range(L - 1):
+        T, pipe = group_legs(T, [[0,1],[2]])
+        A, S = np.linalg.qr(T)
+        #A, S = sp.linalg.qr(T) (For some reason, scipy qr is MUCH slower...)
+        Psi[j] = ungroup_legs(A, pipe)
+        T = np.tensordot(S, Psi[j + 1], axes = [1,1]).transpose([1,0,2])
+    
+    if normalize:
+        Psi[L - 1] = T / la.norm(T)
+    else:
+        Psi[L - 1] = T
+
+    if form == 'B':
+        Psi = [psi.transpose([0,2,1]) for psi in Psi[::-1]]
+
+    Psi = mps_ungroup_legs(Psi, pipes)
+    return(Psi)
+
+def contract_mpos(X, Y, form = None):
+    """ Contracts two MPOS, placing final MPO in form if specified """
+    if X[0].ndim != 4 or Y[0].ndim != 4:
+        raise ValueError("MPOs must have rank 4")
+    XY = []
+    XY = [group_legs(np.tensordot(x, y, [1,0]), 
+                    [[0], [3], [1,4], [2,5]])[0] for x, y in zip(X, Y)]
+
+    if form is not None:
+        XY = mps_2form(XY, form)
+    return(XY)
+
+# tmp file save and load
+def savefile(obj):
+    with open("../rd_tmpfile.pkl", "wb+") as f:
+        pickle.dump(obj, f)
 
