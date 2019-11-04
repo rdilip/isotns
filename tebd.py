@@ -1,9 +1,14 @@
 import numpy as np
+import time
 #import scipy.linalg as la
 import numpy.linalg as la
 from misc import *
+import sys
+from misc import svd_theta
 from moses_move import moses_move
+#from moses_simple import moses_move as moses_move_simple
 from pprint import pprint
+from debugging_tools import breakpoint, check_bond_dim
 
 """ Implements functions to perform a tebd sweep across a column of a 
 PEPS. The PEPS index convention is
@@ -91,13 +96,6 @@ def tebd(Psi, Us = None, Os = None, trunc_params = None, reduced_update = True,
         Psi = mps_invert(Psi)
     return(Psi, exp_vals, tebd_err)
 
-def get_expectation_value(Psi_, Os, trunc_params = None):
-    """ Gets the expectation value of a list of local operators Os. Psi must be
-    in B form. """
-    Psi = Psi_.copy()
-    Psi, expvals = _tebd_sweep(Psi, U = None, Os = Os, trunc_params = trunc_params)
-    return(expvals)
-
 def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
     """ Main work function for sweep(). Performs a sweep from left to right
     on an MPS Psi. """
@@ -111,35 +109,33 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
     num_p = psi.ndim - 2
     tebd_err = 0.0
     for oc in range(L - 1):
+        bp = breakpoint(time.time())
         print("\t\tStarting TEBD on site {0}".format(oc))
         # Going to MPS form (3 leg). Index notation copied.
         psi, pipeL1 = group_legs(psi, [[0], list(range(1, num_p + 1)),\
                                 [num_p + 1]])
         B, pipeR1 = group_legs(Psi[oc + 1], [[0], [num_p], list(range(1, num_p))\
                                 + list(range(num_p + 1, Psi[oc].ndim))])
-        
         # Left update
-        print("\t\t\tBP 1")
         reduced_L, reduced_R = False, False
         if reduced_update and psi.shape[0] * psi.shape[2] < psi.shape[1]:
             reduced_L = True
             psi, pipeL2 = group_legs(psi, [[1], [0,2]])
-
-            QL, RL = la.qr(psi)
+            QL, RL = np.linalg.qr(psi)
             psi = ungroup_legs(RL, pipeL2)
         if reduced_update and B.shape[2] > B.shape[0] * B.shape[1]:
             reduced_R = True
             B, pipeR2 = group_legs(B, [[0, 1], [2]])
-            QR, RR = la.qr(B.T)
+            QR, B = np.linalg.qr(B.T)
             QR = QR.T
-            B = ungroup_legs(RR.T, pipeR2)
+            B = B.T
+            B = ungroup_legs(B, pipeR2)
         theta = np.tensordot(psi, B, [2,1])
-        print("\t\t\tBP 2")
+        #theta = np.tensordot(psi, B, axes = [[-1], [-2]])
         if U is not None:
             theta = np.tensordot(U[oc], theta,  [[2,3],[0,2]])
         else:
             theta = theta.transpose([0, 2, 1, 3])
-        print("\t\t\tBP 3")
         if O is not None:
             Otheta = np.tensordot(O[oc], theta, [[2,3], [0,1]])
             exp_vals[oc] = np.tensordot(theta.conj(), Otheta, axes=[[0,1,2,3],[0,1,2,3]])
@@ -148,22 +144,21 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
             #exp_vals[oc] = np.trace(np.trace(Otheta, axis1=0, axis2=2))
         
         # Grouping one physical and one virtual
-        print("\t\t\tBP 4")
         theta, pipe_theta = group_legs(theta, [[0,2],[1,3]])
-        A, S, B, info = svd_trunc(theta, trunc_params)
-        nrm_t = info["nrm_t"]
-        tebd_err += info["p_trunc"]
-        SB = ((B.T) * S / nrm_t).T
+        # This is taking an oddly long amount of time
+       # A, S, B, info = svd_trunc(theta, trunc_params)
+       # nrm_t = info["nrm_t"]
+       # tebd_err += info["p_trunc"]
+       # SB = ((B.T) * S / nrm_t).T
+        A, SB, info = svd_theta(theta, trunc_params)
         # Because this is an SVD and might involve truncation, we can't just
         # ungroup legs.
-        print("\t\t\tBP 5")
         A = A.reshape(pipe_theta[1][0] + (-1,))
         SB = SB.reshape((-1,) + pipe_theta[1][1]).transpose([1,0,2])
         if reduced_L:
             A = np.tensordot(QL, A, [1,1]).transpose([1, 0, 2])
         if reduced_R:
             SB = np.tensordot(SB, QR, [2,0])
-
         A = ungroup_legs(A, pipeL1)
         SB = ungroup_legs(SB, pipeR1)
 
@@ -174,32 +169,45 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
     Psi[L - 1] = SB
     return(Psi, exp_vals, tebd_err)
 
-def peps_sweep(peps, U, trunc_params, O = None):
+def peps_sweep(peps, U, trunc_params, O = None, flag = False):
     Psi = peps[0]
     Lx = len(peps)
     Ly = len(Psi)
-
+    """
     if U is None:
         U = [None]
     if O is None:
         O = [None]
+    """
 
     info = dict(expectation_O = [],
                 tebd_err = [],
                 moses_err = [])
 
     for j in range(Lx):
+        print(j)
         print("\tStarting TEBD on column {0}".format(j))
+        start = time.time()
         Psi, exp_vals, tebd_err = tebd(Psi, U, O, trunc_params, direct = "L")
-        info["expectation_O"].append(exp_vals)
-        info["tebd_err"].append(tebd_err)
+        print("\tTEBD done at time t={0}".format(time.time() - start))
+        #info["expectation_O"].append(exp_vals)
+        #info["tebd_err"].append(tebd_err)
         if j < Lx - 1:
+
+            #if j == 0 and flag: return(Psi, info)
             Psi, pipe = mps_group_legs(Psi, [[0,1],[2]])
             print("\tStarting moses move on column {0}".format(j))
+            start = time.time()
             A, Lambda, moses_err = moses_move(Psi, trunc_params)
-            info["moses_err"].append(moses_err)
+            #print("moses simple")
+            #A, Lambda, info = moses_move_simple(Psi, trunc_params)
 
+            print("\tMoses done at time t = {0}".format(time.time() - start))
+            #info["moses_err"].append(moses_err)
+
+            #if j == 0 and flag: return(A, info)
             A = mps_ungroup_legs(A, pipe)
+
             peps[j] = A
             Psi, pipe = mps_group_legs(peps[j + 1], axes=[[1],[0,2]])
             Psi = contract_mpos(Lambda, Psi)
@@ -256,16 +264,19 @@ def peps_sweep_with_rotation(peps, Us, trunc_params, Os = None):
         Us = [[None]] * 4
     if Os is None:
         Os = [[None]] * 4
-
+    flag = False
     for i in range(4):
+        if i == 1: flag = True
         print("Starting sequence {i} of full sweep".format(i=i))
-        peps, info_ = peps_sweep(peps, Us[i], trunc_params, Os[i])
-        info["expectation_O"].append(info_["expectation_O"])
-        info["tebd_err"][i] += np.sum(info_["tebd_err"])
-        info["moses_err"][i] += np.sum(info_["tebd_err"])
+        peps, info_ = peps_sweep(peps, Us[i], trunc_params, Os[i], flag = flag)
+        #info["expectation_O"].append(info_["expectation_O"])
+        #info["tebd_err"][i] += np.sum(info_["tebd_err"])
+        #info["moses_err"][i] += np.sum(info_["tebd_err"])
 
-        if i == 1: return(peps, info)
+
+        if i == 0: return(peps, info)
         peps = rotate_peps(peps)
+
 
 
 

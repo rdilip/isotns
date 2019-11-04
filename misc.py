@@ -4,6 +4,7 @@
 import numpy as np
 import scipy as sp
 import scipy.linalg as la
+from debugging_tools import *
 import warnings
 import itertools
 import pickle
@@ -217,10 +218,87 @@ def contract_mpos(X, Y, form = None):
 
     if form is not None:
         XY = mps_2form(XY, form)
+    for A in XY:
+        if check_bond_dim(A):
+            print(A.shape)
+            raise ValueError("Bond dimension exceeded valid value")
     return(XY)
 
-# tmp file save and load
-def savefile(obj):
-    with open("../rd_tmpfile.pkl", "wb+") as f:
-        pickle.dump(obj, f)
+# MIKE code
+def mz_svd(theta, compute_uv=True, full_matrices=True):
+    """SVD with gesvd backup"""
+    try:
+        return sp.linalg.svd(theta,
+                             compute_uv=compute_uv,
+                             full_matrices=full_matrices)
+
+    except np.linalg.linalg.LinAlgError:
+        print("*gesvd*")
+        return sp.linalg.svd(theta,
+                             compute_uv=compute_uv,
+                             full_matrices=full_matrices,
+                             lapack_driver='gesvd')
+
+def svd_theta(theta, truncation_par):
+    """ SVD and truncate a matrix based on truncation_par = {'chi_max': chi, 'p_trunc': p }
+	
+		Returns  normalized A, sB even if theta was not normalized
+		
+		info = {
+		p_trunc =  \sum_{i > cut}  s_i^2, where s is Schmidt spectrum of theta, REGARDLESS of whether theta is normalized
+		
+	"""
+
+    U, s, V = mz_svd(theta, compute_uv=True, full_matrices=False)
+
+    nrm = np.linalg.norm(s)
+    if truncation_par.get('p_trunc', 0.) > 0.:
+        eta_new = np.min([
+            np.count_nonzero(
+                (nrm**2 - np.cumsum(s**2)) > truncation_par.get('p_trunc', 0.))
+            + 1,
+            truncation_par.get('chi_max', len(s))
+        ])
+    else:
+        eta_new = truncation_par.get('chi_max', len(s))
+
+    nrm_t = np.linalg.norm(s[:eta_new])
+    A = U[:, :eta_new]
+    SB = ((V[:eta_new, :].T) * s[:eta_new] / nrm_t).T
+
+    info = {
+        'p_trunc': nrm**2 - nrm_t**2,
+        's': s,
+        'nrm': nrm,
+        'eta': A.shape[1]
+    }
+    return A, SB, info
+
+def svd_theta_UsV(theta, eta, p_trunc=0.):
+    """
+    SVD of matrix, and resize + renormalize to dimension eta
+
+    Returns: U, s, V, eta_new, p_trunc
+        with s rescaled to unit norm
+        p_trunc =  \sum_{i > cut}  s_i^2, where s is Schmidt spectrum of theta, REGARDLESS of whether theta is normalized
+    """
+
+    U, s, V = mz_svd(theta, compute_uv=True, full_matrices=False)
+
+    nrm = np.linalg.norm(s)
+    assert(np.isclose(nrm, 1., rtol=1e-8))
+    ## This assertion is made because if nrm is not equal to 1.,
+    ## the report truncation error p_trunc should be normalized?
+
+    if p_trunc > 0.:
+        eta_new = np.min(
+            [np.count_nonzero((nrm**2 - np.cumsum(s**2)) > p_trunc) + 1, eta])
+    else:
+        eta_new = eta
+
+    nrm_t = np.linalg.norm(s[:eta_new])
+
+    return U[:, :eta_new], s[:eta_new] / nrm_t, V[:eta_new, :], len(
+        s[:eta_new]), nrm**2 - nrm_t**2
+
 

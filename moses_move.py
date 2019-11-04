@@ -31,6 +31,8 @@ from misc import *
 import numpy as np
 from new_splitter import split_psi
 
+from debugging_tools import *
+
 def moses_move(Psi, trunc_params):
     """ Performs a moses move on Psi, starting from the bottom (i.e., the first
     element of Psi and working up. You should view Psi as an MPO before 
@@ -38,8 +40,7 @@ def moses_move(Psi, trunc_params):
 
     Parameters
     ----------
-    Psi: One column wavefunction in B-form. 
-
+    Psi: One column wavefunction in B-form.  
     trunc_params: Dictionary of trunc_params. In addition to p_trunc and chi_max,
     also accepts eta_max (for the A tensor) and a dictionary moses_trunc_params,
     which can specifiy etaH_max, chiH_max, etaV_max, chiV_max as shown in the 
@@ -84,14 +85,10 @@ def moses_move(Psi, trunc_params):
         if j == L - 1:
             dL = 1
             dR = np.min([etaH_max, tri.shape[0]])
-
-
-        
         a, S, B, err = split_psi(tri,
                             (dL, dR),
                             dict(chi_max = etaV_max, 
-                            p_trunc = trunc_params["p_trunc"]),
-                            )
+                            p_trunc = trunc_params["p_trunc"]))
 
         errors.append(err)
         dL, dR = a.shape[1:]
@@ -108,6 +105,5 @@ def moses_move(Psi, trunc_params):
 
         chiV = dL
         eta = B.shape[-1]
-
     return(A, Lambda, err)
  

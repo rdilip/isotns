@@ -41,11 +41,13 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
     tp = dict(p_trunc = 0.0, chi_max = dL * dR)
 
     X, y, Z, info = svd_trunc(psi.reshape((-1, mL * mR)), tp)
+    #X, y, Z, D2, trunc_leg = svd_theta_UsV(psi.reshape(-1, mL * mR), dL * dR, 0.)
+
     h_err = info["p_trunc"]
     A = X
     theta = (Z.T * y).T
     D2 = len(y)
-
+    init_from_polar = False
     # This next section involves truncating the legs of psi based on eigenvalues
     # of the reduced density matrix (Hermitian and positive so EVs are SVs)
     if init_from_polar:
@@ -75,17 +77,21 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
         Zp = np.dot(u, v)
         A = X @ Zp
         theta = np.dot(Zp.T.conj(), theta)
-
     # Disentangler
     theta = np.reshape(theta, (dL, dR, mL, mR)) 
     theta = theta.transpose([2, 0, 1, 3]) # left to right
+
 
     theta, U, Ss = disentangle(theta, **disentangler_params)
     A = np.tensordot(A, np.reshape(np.conj(U), (dL, dR, dL * dR)), [1, 2])
 
     # Second splitting
-    theta, pipetheta = group_legs(theta, [[0,1],[2,3]])
-    X, s, Z, info = svd_trunc(theta) # TODO insert trunc params
+
+    # theta, pipetheta = group_legs(theta, [[0,1],[2,3]])
+    # This appears to be the problem
+    theta = theta.transpose([1,0,2,3])
+    theta = np.reshape(theta, (dL * mL, dR * mR))
+    X, s, Z, info = svd_trunc(theta, trunc_params) # TODO insert trunc params
     v_err = info["p_trunc"]
     S = np.reshape(X, (dL, mL, len(s)))
     S = S * s
@@ -103,16 +109,14 @@ def U2(psi):
     chiL, d1, d2, chiR = psi.shape
     rhoL = np.tensordot(psi, psi.conj(), [[2,3],[2,3]])
     E2 = np.tensordot(rhoL, psi.conj(), [[0,1],[0,1]])
-    E2 = np.tensordot(E2, psi, [[0,3],[0,3]])
-    E2 = E2.reshape(d1 * d2, d1 * d2)
-    S2 = E2.trace()
-
+    E2 = np.tensordot(psi, E2, [[0,3],[0,3]])
+    E2, pipeE = group_legs(E2, [[0,1],[2,3]])
+    S2 = np.trace(E2)
     X, Y, Z = svd(E2)
-    # Why Hermitian conjugate? We return the Hermitian conjugate because the
-    # first index points upwards.
+
     return(-np.log(S2), (X @ Z).T.conj())
 
-def disentangle(psi, eps=1e-6, max_iter=30):
+def disentangle(psi, eps=1e-6, max_iter=120):
     """ Disentangles a wavefunction with 2-renyi polar iteration.
     
     Parameters
@@ -145,3 +149,4 @@ def disentangle(psi, eps=1e-6, max_iter=30):
         if i > 1 and Ss[-2] - Ss[-1] < eps:
             break
     return(psi, U, Ss)
+
