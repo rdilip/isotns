@@ -3,7 +3,7 @@ import numpy as np
 from misc import *
 import scipy.linalg as la
 
-def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_from_polar = True):
+def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_from_polar = True, flag = False):
     """ Splits a tripartite state psi. Finds an approximation psi ~= A.lambda,
     where A is an isometry and lambda is a TEBD style wavefunction. 
     
@@ -23,7 +23,6 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
     """
     
     dL, dR = split_dim 
-
     if disentangler_params is None:
         disentangler_params = {}
 
@@ -38,16 +37,16 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
     
     # How much are we throwing away by not using get_closest_factors()?
     # dL, dR = get_closest_factors(d)
-    tp = dict(p_trunc = 0.0, chi_max = dL * dR)
+    tp = dict(p_trunc = 0.0, eta = dL * dR)
+#    X, y, Z, trunc_info_H = svd_trunc(psi.reshape((-1, mL * mR)), **tp)
+    X,y, Z, D2, trunc_leg = svd_theta_UsV(psi.reshape((-1, mL*mR)), dL*dR, 0.)
 
-    X, y, Z, info = svd_trunc(psi.reshape((-1, mL * mR)), tp)
-    #X, y, Z, D2, trunc_leg = svd_theta_UsV(psi.reshape(-1, mL * mR), dL * dR, 0.)
-
-    h_err = info["p_trunc"]
     A = X
     theta = (Z.T * y).T
     D2 = len(y)
     init_from_polar = False
+
+
     # This next section involves truncating the legs of psi based on eigenvalues
     # of the reduced density matrix (Hermitian and positive so EVs are SVs)
     if init_from_polar:
@@ -81,42 +80,55 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
     theta = np.reshape(theta, (dL, dR, mL, mR)) 
     theta = theta.transpose([2, 0, 1, 3]) # left to right
 
-
+    
     theta, U, Ss = disentangle(theta, **disentangler_params)
+
+    #theta, U, info = disentangle2(theta, eps = 10*(1.e-6), max_iter=120, verbose = False)
+    if flag:
+        local_savefile(theta)
+        raise ValueError("split")
+
+
+
+
     A = np.tensordot(A, np.reshape(np.conj(U), (dL, dR, dL * dR)), [1, 2])
 
-    # Second splitting
 
-    # theta, pipetheta = group_legs(theta, [[0,1],[2,3]])
-    # This appears to be the problem
+    # Second splitting
     theta = theta.transpose([1,0,2,3])
     theta = np.reshape(theta, (dL * mL, dR * mR))
-    X, s, Z, info = svd_trunc(theta, trunc_params) # TODO insert trunc params
-    v_err = info["p_trunc"]
+
+    X, s, Z, chi_C, trunc_bond = svd_theta_UsV(theta, trunc_params['chi_max'], p_trunc=3e-16)
+    errH = trunc_leg#trunc_info_H["p_trunc"]
+    errV = trunc_bond#info_V["p_trunc"]
+
+
+
+    info = dict(error = errH + errV, d_error = errH, sLambda = s)
+
     S = np.reshape(X, (dL, mL, len(s)))
     S = S * s
 
     B = np.reshape(Z, (len(s), dR, mR))
     B = B.transpose([1,0,2])
-
-    return(A, S, B, h_err + v_err) # Returns sum of errors
+    return(A, S, B, info) # Returns sum of errors
 
 def U2(psi):
     """ Calculates the 2-renyi entropy of a wavefunction psi. Returns the 
     2-renyi entropy and the unitary matrix minimizing the Renyi entropy
     (see the procedure described in https://arxiv.org/pdf/1711.01288.pdf).
+    Changed to mirror Mike/Frank's code for comparison.
     """
     chiL, d1, d2, chiR = psi.shape
     rhoL = np.tensordot(psi, psi.conj(), [[2,3],[2,3]])
-    E2 = np.tensordot(rhoL, psi.conj(), [[0,1],[0,1]])
-    E2 = np.tensordot(psi, E2, [[0,3],[0,3]])
-    E2, pipeE = group_legs(E2, [[0,1],[2,3]])
+    E2 = np.tensordot(rhoL, psi, [[2,3],[0,1]])
+    E2 = np.tensordot(psi.conj(), E2, [[0,3],[0,3]])
+    E2 = E2.reshape((d1*d2, -1))
     S2 = np.trace(E2)
-    X, Y, Z = svd(E2)
+    X, Y, Z = np.linalg.svd(E2)
+    return -np.log(S2), (np.dot(X, Z).T).conj()
 
-    return(-np.log(S2), (X @ Z).T.conj())
-
-def disentangle(psi, eps=1e-6, max_iter=120):
+def disentangle(psi, eps=1e-5, max_iter=120):
     """ Disentangles a wavefunction with 2-renyi polar iteration.
     
     Parameters
@@ -138,15 +150,21 @@ def disentangle(psi, eps=1e-6, max_iter=120):
     """
     Ss = []
     chiL, d1, d2, chiR = psi.shape
-    U = np.eye(d1 * d2)
-    for i in range(max_iter):
+    U = np.eye(d1 * d2, dtype = psi.dtype)
+    go = True
+    m = 0
+    while m < max_iter and go:
         S, u = U2(psi)
         Ss.append(S)
         U = u @ U
         u = u.reshape([d1, d2, d1, d2])
-        psi = np.tensordot(psi, u, [[1,2],[2,3]]).transpose([0,2,3,1])
+        # ERROR: my commented construction doesn't work. 
+        psi = np.tensordot(u, psi, axes=[[2,3],[1,2]]).transpose([2,0,1,3])
+#        psi = np.tensordot(psi, u, [[1,2],[2,3]]).transpose([0,2,3,1])
 
-        if i > 1 and Ss[-2] - Ss[-1] < eps:
-            break
+        if m > 1:
+            go = Ss[-2] - Ss[-1] > eps
+        m += 1
+
     return(psi, U, Ss)
 

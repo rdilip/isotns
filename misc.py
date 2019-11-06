@@ -121,7 +121,7 @@ def svd(A, full_matrices = False):
                       stacklevel=2)
         return(la.svd(A, full_matrices = full_matrices, lapack_driver='gesvd'))
 
-def svd_trunc(A, trunc_params = None):
+def svd_trunc(A, eta, p_trunc =0.0):
     """ Performs a truncated SVD. This SVD function is also robust -- if there
     is an error while using the iterative scipy methods it directly calls
     the LAPACK cgsvd method. 
@@ -138,24 +138,20 @@ def svd_trunc(A, trunc_params = None):
     U, SV: U @ S @ V.T = A
     """
     trunc_info = {}
-    if trunc_params is None:
-        trunc_params = {}
     U, S, V = svd(A, full_matrices=False)
     nrm = np.linalg.norm(S)
 
-    p_trunc = trunc_params.get("p_trunc", 0.0)
-    chi_max = trunc_params.get("chi_max", len(S))
     if p_trunc > 0.0:
-        eta = np.count_nonzero(nrm**2 - np.cumsum(S**2) > p_trunc) + 1
-        eta_new = np.min((eta, chi_max))
+        eta_new = np.count_nonzero(nrm**2 - np.cumsum(S**2) > p_trunc) + 1
+        eta_new = np.min((eta, eta_new))
     else:
-        eta_new = chi_max
-
+        eta_new = eta
     nrm_t = np.linalg.norm(S[:eta_new])
     trunc_info["p_trunc"] = nrm**2 - nrm_t**2
     trunc_info["nrm_t"] = nrm_t
     trunc_info["eta"] = eta_new
-    return(U[:, :eta_new], S[:eta_new], V[:eta_new, :], trunc_info)
+    return(U[:, :eta_new], S[:eta_new] / nrm_t, V[:eta_new, :], trunc_info)
+
 
 # MPS and MPO manipulations
 
@@ -175,7 +171,6 @@ def mps_group_legs(Psi, axes = 'all'):
         Psi_.append(p)
         pipes.append(pipe)
     return(Psi_, pipes)
-
 def mps_ungroup_legs(Psi, pipes):
     """ Returns an MPS that was grouped using mps_group_legs """ 
     return([ungroup_legs(Psi[i], pipes[i]) for i in range(len(Psi))])
@@ -218,26 +213,9 @@ def contract_mpos(X, Y, form = None):
 
     if form is not None:
         XY = mps_2form(XY, form)
-    for A in XY:
-        if check_bond_dim(A):
-            print(A.shape)
-            raise ValueError("Bond dimension exceeded valid value")
     return(XY)
 
 # MIKE code
-def mz_svd(theta, compute_uv=True, full_matrices=True):
-    """SVD with gesvd backup"""
-    try:
-        return sp.linalg.svd(theta,
-                             compute_uv=compute_uv,
-                             full_matrices=full_matrices)
-
-    except np.linalg.linalg.LinAlgError:
-        print("*gesvd*")
-        return sp.linalg.svd(theta,
-                             compute_uv=compute_uv,
-                             full_matrices=full_matrices,
-                             lapack_driver='gesvd')
 
 def svd_theta(theta, truncation_par):
     """ SVD and truncate a matrix based on truncation_par = {'chi_max': chi, 'p_trunc': p }
@@ -249,7 +227,7 @@ def svd_theta(theta, truncation_par):
 		
 	"""
 
-    U, s, V = mz_svd(theta, compute_uv=True, full_matrices=False)
+    U, s, V = mzsvd(theta, compute_uv=True, full_matrices=False)
 
     nrm = np.linalg.norm(s)
     if truncation_par.get('p_trunc', 0.) > 0.:
@@ -273,8 +251,21 @@ def svd_theta(theta, truncation_par):
         'eta': A.shape[1]
     }
     return A, SB, info
+def mzsvd(theta, compute_uv=True, full_matrices=True):
+    """SVD with gesvd backup"""
+    try:
+        return sp.linalg.svd(theta,
+                             compute_uv=compute_uv,
+                             full_matrices=full_matrices)
 
-def svd_theta_UsV(theta, eta, p_trunc=0.):
+    except np.linalg.linalg.LinAlgError:
+        print("*gesvd*")
+        return sp.linalg.svd(theta,
+                             compute_uv=compute_uv,
+                             full_matrices=full_matrices,
+                             lapack_driver='gesvd')
+
+def svd_theta_UsV(theta, eta, p_trunc=0., flag=False):
     """
     SVD of matrix, and resize + renormalize to dimension eta
 
@@ -282,8 +273,11 @@ def svd_theta_UsV(theta, eta, p_trunc=0.):
         with s rescaled to unit norm
         p_trunc =  \sum_{i > cut}  s_i^2, where s is Schmidt spectrum of theta, REGARDLESS of whether theta is normalized
     """
-
-    U, s, V = mz_svd(theta, compute_uv=True, full_matrices=False)
+#    U, s, V = mzsvd(theta, compute_uv = True, full_matrices = False)
+    U, s, V = np.linalg.svd(theta, compute_uv = True,full_matrices = False)
+    if flag:
+        local_savefile([U,s,V])
+        raise ValueError("SVD Theta")
 
     nrm = np.linalg.norm(s)
     assert(np.isclose(nrm, 1., rtol=1e-8))
@@ -301,4 +295,12 @@ def svd_theta_UsV(theta, eta, p_trunc=0.):
     return U[:, :eta_new], s[:eta_new] / nrm_t, V[:eta_new, :], len(
         s[:eta_new]), nrm**2 - nrm_t**2
 
+
+# Saving files
+def local_savefile(obj):
+    with open("local_tmp_file.pkl", "wb+") as f:
+        pickle.dump(obj, f)
+def local_loadfile():
+    with open("local_tmp_file.pkl", "rb") as f:
+        return(pickle.load(f))
 

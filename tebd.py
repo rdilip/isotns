@@ -4,7 +4,7 @@ import time
 import numpy.linalg as la
 from misc import *
 import sys
-from misc import svd_theta
+from misc import local_savefile, local_loadfile
 from moses_move import moses_move
 #from moses_simple import moses_move as moses_move_simple
 from pprint import pprint
@@ -53,7 +53,7 @@ def get_TFI_bonds(L, J = 1.0, g = 1.0):
     return(ops)
 
 def tebd(Psi, Us = None, Os = None, trunc_params = None, reduced_update = True,
-        direct = 'R'):
+        direct = 'R', flag = False):
     """ Performs TEBD across an MPS Psi (which is a column in the PEPS).
     The MPS should start in the B form and will finish in the A form. 
 
@@ -84,39 +84,41 @@ def tebd(Psi, Us = None, Os = None, trunc_params = None, reduced_update = True,
     if trunc_params is None:
         trunc_params = {}
     if direct == 'R':
-        Psi, exp_vals, tebd_err = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update)
+        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update, tebd_flag = flag)
     else:
         Psi = mps_invert(Psi)
         if Us is not None:
             Us = operator_invert(Us)
         if Os is not None:
             Os = operator_invert(Os)
-        Psi, exp_vals, tebd_err = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update)
+        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update, tebd_flag=flag)
         exp_vals = exp_vals[::-1]
         Psi = mps_invert(Psi)
-    return(Psi, exp_vals, tebd_err)
+    info = dict(tebd_err = tebd_err, nrm = nrm, expectation_O = exp_vals)
+    return(Psi, info)
 
-def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
+def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False):
     """ Main work function for sweep(). Performs a sweep from left to right
     on an MPS Psi. """
 
     L = len(Psi)
-
     exp_vals = [0 for i in range(L-1)]
     psi = Psi[0] # orthogonality center
+
+
 
     # Number of physical legs -- view the wavefunction as an MPO
     num_p = psi.ndim - 2
     tebd_err = 0.0
+    nrm = 1.0
     for oc in range(L - 1):
-        bp = breakpoint(time.time())
-        print("\t\tStarting TEBD on site {0}".format(oc))
         # Going to MPS form (3 leg). Index notation copied.
         psi, pipeL1 = group_legs(psi, [[0], list(range(1, num_p + 1)),\
                                 [num_p + 1]])
         B, pipeR1 = group_legs(Psi[oc + 1], [[0], [num_p], list(range(1, num_p))\
                                 + list(range(num_p + 1, Psi[oc].ndim))])
         # Left update
+
         reduced_L, reduced_R = False, False
         if reduced_update and psi.shape[0] * psi.shape[2] < psi.shape[1]:
             reduced_L = True
@@ -131,6 +133,8 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
             B = B.T
             B = ungroup_legs(B, pipeR2)
         theta = np.tensordot(psi, B, [2,1])
+
+
         #theta = np.tensordot(psi, B, axes = [[-1], [-2]])
         if U is not None:
             theta = np.tensordot(U[oc], theta,  [[2,3],[0,2]])
@@ -139,80 +143,100 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
         if O is not None:
             Otheta = np.tensordot(O[oc], theta, [[2,3], [0,1]])
             exp_vals[oc] = np.tensordot(theta.conj(), Otheta, axes=[[0,1,2,3],[0,1,2,3]])
-            # This is weirdly slow
-            #Otheta = np.tensordot(Otheta, theta.conj(), [[0,1],[0,1]])
-            #exp_vals[oc] = np.trace(np.trace(Otheta, axis1=0, axis2=2))
         
         # Grouping one physical and one virtual
         theta, pipe_theta = group_legs(theta, [[0,2],[1,3]])
-        # This is taking an oddly long amount of time
-       # A, S, B, info = svd_trunc(theta, trunc_params)
-       # nrm_t = info["nrm_t"]
-       # tebd_err += info["p_trunc"]
-       # SB = ((B.T) * S / nrm_t).T
+
         A, SB, info = svd_theta(theta, trunc_params)
+
+        
+        nrm *= info["nrm"]
+        tebd_err += info["p_trunc"]
+
+
         # Because this is an SVD and might involve truncation, we can't just
         # ungroup legs.
         A = A.reshape(pipe_theta[1][0] + (-1,))
         SB = SB.reshape((-1,) + pipe_theta[1][1]).transpose([1,0,2])
+
         if reduced_L:
             A = np.tensordot(QL, A, [1,1]).transpose([1, 0, 2])
         if reduced_R:
-            SB = np.tensordot(SB, QR, [2,0])
+  #          SB = np.tensordot(SB, QR, [2,0])
+            SB = np.dot(SB, QR)
+
+
         A = ungroup_legs(A, pipeL1)
         SB = ungroup_legs(SB, pipeR1)
-
-
         psi = SB
         Psi[oc] = A
 
     Psi[L - 1] = SB
-    return(Psi, exp_vals, tebd_err)
+    return(Psi, nrm, tebd_err, exp_vals)
 
 def peps_sweep(peps, U, trunc_params, O = None, flag = False):
     Psi = peps[0]
     Lx = len(peps)
     Ly = len(Psi)
-    """
-    if U is None:
-        U = [None]
-    if O is None:
-        O = [None]
-    """
+
+    tebd_2_mm_trunc = 0.1 # IDK what this is...
+    min_p_trunc = trunc_params["p_trunc"]
+    # This is adjusted according to the errors. Not sure why exactly
+    target_p_trunc = min_p_trunc 
 
     info = dict(expectation_O = [],
                 tebd_err = [],
-                moses_err = [])
+                moses_err = [],
+                moses_d_err = [],
+                nrm = 1.)
 
     for j in range(Lx):
-        print(j)
-        print("\tStarting TEBD on column {0}".format(j))
-        start = time.time()
-        Psi, exp_vals, tebd_err = tebd(Psi, U, O, trunc_params, direct = "L")
-        print("\tTEBD done at time t={0}".format(time.time() - start))
-        #info["expectation_O"].append(exp_vals)
-        #info["tebd_err"].append(tebd_err)
+
+
+        
+        tebd_trunc_params = dict(p_trunc = target_p_trunc,
+                                 chi_max = trunc_params["chi_max"])
+
+        Psi, tebd_info = tebd(Psi, U, O, tebd_trunc_params, direct = "L", flag=False)
+
+
+
+
+        info["expectation_O"].append(tebd_info['expectation_O'])
+        info["tebd_err"].append(tebd_info['tebd_err'])
+        info["nrm"] *= tebd_info["nrm"]
+
+
         if j < Lx - 1:
-
-            #if j == 0 and flag: return(Psi, info)
+ 
             Psi, pipe = mps_group_legs(Psi, [[0,1],[2]])
-            print("\tStarting moses move on column {0}".format(j))
-            start = time.time()
-            A, Lambda, moses_err = moses_move(Psi, trunc_params)
-            #print("moses simple")
-            #A, Lambda, info = moses_move_simple(Psi, trunc_params)
+            A, Lambda, moses_info = moses_move(Psi, trunc_params, False)
+            
 
-            print("\tMoses done at time t = {0}".format(time.time() - start))
-            #info["moses_err"].append(moses_err)
 
-            #if j == 0 and flag: return(A, info)
+
+            info["moses_err"].append(moses_info.setdefault("error", np.nan))
+
+            info["moses_d_err"].append(moses_info.setdefault("d_error", np.nan))
+
+            if not np.isnan(info["moses_err"][-1]):
+                target_p_trunc = np.max([tebd_2_mm_trunc * info['moses_err'][-1] /\
+                                        len(Psi), min_p_trunc])
+
             A = mps_ungroup_legs(A, pipe)
 
             peps[j] = A
             Psi, pipe = mps_group_legs(peps[j + 1], axes=[[1],[0,2]])
-            Psi = contract_mpos(Lambda, Psi)
-            Psi = mps_ungroup_legs(Psi, pipe)
+
+
             peps[j + 1] = Psi
+          
+            Psi = contract_mpos(Lambda, Psi)
+
+            Psi = mps_ungroup_legs(Psi, pipe)
+            
+
+
         else:
             Psi = canonical_form(Psi, form='A')
             peps[j] = Psi
@@ -266,19 +290,14 @@ def peps_sweep_with_rotation(peps, Us, trunc_params, Os = None):
         Os = [[None]] * 4
     flag = False
     for i in range(4):
-        if i == 1: flag = True
         print("Starting sequence {i} of full sweep".format(i=i))
         peps, info_ = peps_sweep(peps, Us[i], trunc_params, Os[i], flag = flag)
-        #info["expectation_O"].append(info_["expectation_O"])
-        #info["tebd_err"][i] += np.sum(info_["tebd_err"])
-        #info["moses_err"][i] += np.sum(info_["tebd_err"])
+        info["expectation_O"].append(info_["expectation_O"])
+        info["tebd_err"][i] += np.sum(info_["tebd_err"])
+        info["moses_err"][i] += np.sum(info_["tebd_err"])
 
-
-        if i == 0: return(peps, info)
+        #if i == 0: return peps, info
         peps = rotate_peps(peps)
-
-
-
 
     return(peps, info)
 
