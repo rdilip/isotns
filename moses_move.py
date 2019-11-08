@@ -30,9 +30,6 @@ and works its way up, shifting the orthogonality center as it goes.
 from misc import *
 import numpy as np
 from new_splitter import split_psi
-from renyin_splitter import split_psi as mz_split_psi
-
-from debugging_tools import *
 
 def moses_move(Psi, trunc_params,  trunc_flag = False):
     """ Performs a moses move on Psi, starting from the bottom (i.e., the first
@@ -76,13 +73,8 @@ def moses_move(Psi, trunc_params,  trunc_flag = False):
     # Reshape bottom most tensor as a pentagonal tensor
     pent = Psi[0].reshape([chiV, eta, pL, pR, chi])
 
-
-
     for j in range(L):
         tri, pipe_tri = group_legs(pent, [[0,2],[4],[1,3]])
-
-
-
         dL = chiV_max
         dR = chiH_max
 
@@ -97,7 +89,6 @@ def moses_move(Psi, trunc_params,  trunc_flag = False):
                             p_trunc = trunc_params["p_trunc"]),
                             flag =False)
         
-
         errors.append(info.setdefault("error", np.nan))
         d_errors.append(info.setdefault("d_error"))
         dL, dR = a.shape[1:]
@@ -105,7 +96,6 @@ def moses_move(Psi, trunc_params,  trunc_flag = False):
         a = a.reshape(chiV, pL, dL, dR).transpose([1,3,0,2]) 
         Lambda.append(B)
         A.append(a)
-
         if j < L - 1:
             pL, pR, _, chi = Psi[j+ 1].shape
             pent = np.tensordot(S, Psi[j + 1], [1,2])

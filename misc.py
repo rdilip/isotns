@@ -152,7 +152,6 @@ def svd_trunc(A, eta, p_trunc =0.0):
     trunc_info["eta"] = eta_new
     return(U[:, :eta_new], S[:eta_new] / nrm_t, V[:eta_new, :], trunc_info)
 
-
 # MPS and MPO manipulations
 
 def mps_group_legs(Psi, axes = 'all'):
@@ -294,7 +293,6 @@ def svd_theta_UsV(theta, eta, p_trunc=0., flag=False):
 
     return U[:, :eta_new], s[:eta_new] / nrm_t, V[:eta_new, :], len(
         s[:eta_new]), nrm**2 - nrm_t**2
-
 
 # Saving files
 def local_savefile(obj):

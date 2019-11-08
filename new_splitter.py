@@ -2,8 +2,10 @@
 import numpy as np
 from misc import *
 import scipy.linalg as la
+from disentanglers import renyi_2_disentangler
 
-def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_from_polar = True, flag = False):
+def split_psi(psi, split_dim, trunc_params, disentangler_params = None,
+                disentangler = renyi_2_disentangler, init_from_polar = True):
     """ Splits a tripartite state psi. Finds an approximation psi ~= A.lambda,
     where A is an isometry and lambda is a TEBD style wavefunction. 
     
@@ -65,106 +67,29 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None, init_fro
 
         psi /= la.norm(psi)
         u, s, v = svd(psi.reshape(D2, D2))
-        # I'm not sure we can do this.
-        # psi has shape D2 x mL x mR, which we've truncated to D2 x dL x dR.
-        # Then it seems like dL x dR should be D2, but D2 is the number of
-        # singular values of psi. If psi does not have a weird rank, then 
-        # D2 = rank(psi*psi) = mL * mR. If mL > dL, mR > dR, then this is fine
-        # because we haven't done any truncation. If we have truncated then it's
-        # unclear why dL * dR = d2...
-
         Zp = np.dot(u, v)
         A = X @ Zp
         theta = np.dot(Zp.T.conj(), theta)
     # Disentangler
     theta = np.reshape(theta, (dL, dR, mL, mR)) 
     theta = theta.transpose([2, 0, 1, 3]) # left to right
-
     
-    theta, U, Ss = disentangle(theta, **disentangler_params)
-
-    #theta, U, info = disentangle2(theta, eps = 10*(1.e-6), max_iter=120, verbose = False)
-    if flag:
-        local_savefile(theta)
-        raise ValueError("split")
-
-
-
+    theta, U, Ss = disentangler(theta, **disentangler_params)
 
     A = np.tensordot(A, np.reshape(np.conj(U), (dL, dR, dL * dR)), [1, 2])
-
-
     # Second splitting
     theta = theta.transpose([1,0,2,3])
     theta = np.reshape(theta, (dL * mL, dR * mR))
 
     X, s, Z, chi_C, trunc_bond = svd_theta_UsV(theta, trunc_params['chi_max'], p_trunc=3e-16)
-    errH = trunc_leg#trunc_info_H["p_trunc"]
-    errV = trunc_bond#info_V["p_trunc"]
-
-
+    errH = trunc_leg
+    errV = trunc_bond
 
     info = dict(error = errH + errV, d_error = errH, sLambda = s)
-
     S = np.reshape(X, (dL, mL, len(s)))
     S = S * s
-
     B = np.reshape(Z, (len(s), dR, mR))
     B = B.transpose([1,0,2])
     return(A, S, B, info) # Returns sum of errors
 
-def U2(psi):
-    """ Calculates the 2-renyi entropy of a wavefunction psi. Returns the 
-    2-renyi entropy and the unitary matrix minimizing the Renyi entropy
-    (see the procedure described in https://arxiv.org/pdf/1711.01288.pdf).
-    Changed to mirror Mike/Frank's code for comparison.
-    """
-    chiL, d1, d2, chiR = psi.shape
-    rhoL = np.tensordot(psi, psi.conj(), [[2,3],[2,3]])
-    E2 = np.tensordot(rhoL, psi, [[2,3],[0,1]])
-    E2 = np.tensordot(psi.conj(), E2, [[0,3],[0,3]])
-    E2 = E2.reshape((d1*d2, -1))
-    S2 = np.trace(E2)
-    X, Y, Z = np.linalg.svd(E2)
-    return -np.log(S2), (np.dot(X, Z).T).conj()
-
-def disentangle(psi, eps=1e-5, max_iter=120):
-    """ Disentangles a wavefunction with 2-renyi polar iteration.
-    
-    Parameters
-    ---------- 
-    psi: TEBD style wavefunction. Leg ordering is ancilla - physical -physical -
-    ancilla.
-
-    eps: Minimum change between iterations.
-
-    max_iter: Maximum number of iterations
-
-    Returns
-    ----------
-    psiD: The disentangled wavefunction. psiD = U psi
-
-    U: The unitary disentangler
-
-    Ss: The series of 2-renyi entropies.
-    """
-    Ss = []
-    chiL, d1, d2, chiR = psi.shape
-    U = np.eye(d1 * d2, dtype = psi.dtype)
-    go = True
-    m = 0
-    while m < max_iter and go:
-        S, u = U2(psi)
-        Ss.append(S)
-        U = u @ U
-        u = u.reshape([d1, d2, d1, d2])
-        # ERROR: my commented construction doesn't work. 
-        psi = np.tensordot(u, psi, axes=[[2,3],[1,2]]).transpose([2,0,1,3])
-#        psi = np.tensordot(psi, u, [[1,2],[2,3]]).transpose([0,2,3,1])
-
-        if m > 1:
-            go = Ss[-2] - Ss[-1] > eps
-        m += 1
-
-    return(psi, U, Ss)
 

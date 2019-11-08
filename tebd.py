@@ -112,6 +112,7 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
     tebd_err = 0.0
     nrm = 1.0
     for oc in range(L - 1):
+
         # Going to MPS form (3 leg). Index notation copied.
         psi, pipeL1 = group_legs(psi, [[0], list(range(1, num_p + 1)),\
                                 [num_p + 1]])
@@ -135,7 +136,7 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
         theta = np.tensordot(psi, B, [2,1])
 
 
-        #theta = np.tensordot(psi, B, axes = [[-1], [-2]])
+
         if U is not None:
             theta = np.tensordot(U[oc], theta,  [[2,3],[0,2]])
         else:
@@ -146,7 +147,6 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
         
         # Grouping one physical and one virtual
         theta, pipe_theta = group_legs(theta, [[0,2],[1,3]])
-
         A, SB, info = svd_theta(theta, trunc_params)
 
         
@@ -162,7 +162,6 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
         if reduced_L:
             A = np.tensordot(QL, A, [1,1]).transpose([1, 0, 2])
         if reduced_R:
-  #          SB = np.tensordot(SB, QR, [2,0])
             SB = np.dot(SB, QR)
 
 
@@ -300,6 +299,7 @@ def peps_sweep_with_rotation(peps, Us, trunc_params, Os = None):
         peps = rotate_peps(peps)
 
     return(peps, info)
+
 
 if __name__ == '__main__':
     print("test")
