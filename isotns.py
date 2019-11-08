@@ -97,9 +97,9 @@ class isotns:
                     moses_err = [0.0] * 4
                     )
         if Us is None:
-            Us = [[None]] * 4
+            Us = [None] * 4
         if Os is None:
-            Os = [[None]] * 4
+            Os = [None] * 4
         for i in range(4):
             print("Starting sequence {i} of full sweep".format(i=i))
             info_ = self._full_sweep(Us[i], Os[i])
@@ -137,11 +137,8 @@ class isotns:
             info = self.sweep_with_rotation([Uv, Uh, Uv, Uh], trunc_params)
         info = self.sweep_with_rotation([Uv2, None, None, None],
                                         trunc_params,
-                                       Os=[None, None, H[0], H[1]])
+                                       Os=[None, None, Hs[0], Hs[1]])
         return(info)
-
-
-        
 
     def _full_sweep(self, U, O = None):
         Psi = self.peps[0]
@@ -159,12 +156,16 @@ class isotns:
                     moses_err = [],
                     moses_d_err = [],
                     nrm = 1.)
-
+        if U is None:
+            U = [None]
+        if O is None:
+            O = [None]
         for j in range(Lx):
             tebd_trunc_params = dict(p_trunc = target_p_trunc,
                                      chi_max = trunc_params["chi_max"])
-
-            Psi, tebd_info = tebd(Psi, U, O, tebd_trunc_params, direct = "L", flag=False)
+            Psi, tebd_info = tebd(Psi, U,
+                                       O,
+                                       tebd_trunc_params, direct = "L")
 
             info["expectation_O"].append(tebd_info['expectation_O'])
             info["tebd_err"].append(tebd_info['tebd_err'])
@@ -172,7 +173,7 @@ class isotns:
 
             if j < Lx - 1:
                 Psi, pipe = mps_group_legs(Psi, [[0,1],[2]])
-                A, Lambda, moses_info = moses_move(Psi, trunc_params, False)
+                A, Lambda, moses_info = moses_move(Psi, trunc_params)
                 info["moses_err"].append(moses_info.setdefault("error", np.nan))
                 info["moses_d_err"].append(moses_info.setdefault("d_error", np.nan))
 

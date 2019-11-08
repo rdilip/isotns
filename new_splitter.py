@@ -74,7 +74,7 @@ def split_psi(psi, split_dim, trunc_params, disentangler_params = None,
     theta = np.reshape(theta, (dL, dR, mL, mR)) 
     theta = theta.transpose([2, 0, 1, 3]) # left to right
     
-    theta, U, Ss = disentangler(theta, **disentangler_params)
+    theta, U = disentangler(theta, **disentangler_params)
 
     A = np.tensordot(A, np.reshape(np.conj(U), (dL, dR, dL * dR)), [1, 2])
     # Second splitting
