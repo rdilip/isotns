@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.linalg as la
+import pickle
 from tebd import tebd 
 from tenpy.networks.mps import MPS
 from tenpy.models.hubbard import BoseHubbardChain
@@ -113,11 +114,12 @@ def tenpy_1D_dmrg_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     M = BoseHubbardChain({"L": 8, "t": 0.1, "U": 0.14, "bc_MPS": "finite"})
     psi = MPS.from_product_state(M.lat.mps_sites(), [1,0,0,0,0,0,0,0], "finite")
     dmrg_params = {"trunc_params": {"chi_max": 32, "svd_min": 1.e-10}}
-    eng = tenpy_dmrg.Engine(psi, M, dmrg_params)
-    eng.run() # imaginary time evolution with TEBD
+    eng = tenpy_dmrg.TwoSiteDMRGEngine(psi, M, dmrg_params)
+    E, psi= eng.run() # imaginary time evolution with TEBD
     print("E =", sum(psi.expectation_value(M.H_bond[1:])))
     with open("tenpy_bh_dmrg_L={0},t={1},U={2}.pkl".format(L, t, U), "wb+") as f:
-        pickle.dump([psi, M, tebd_params], f)
+        pickle.dump([psi, E], f)
+    return(psi, E)
 
 def iso_1D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     bh_bonds = get_bose_hubbard_bonds()
@@ -126,7 +128,7 @@ def iso_1D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     Psi = [b.copy() for i in range(8)]
     Psi[0][1,0,0] = 1.0
     Psi[0][0,0,0] = 0.0
-    tp = {"chi_max": 30, "p_trunc": 1.e-10}
+    tp = {"chi_max": 6, "p_trunc": 1.e-10}
     dts = [0.1, 0.001, 1.e-5]
     E_curr = 0.0
     for dt in dts:
@@ -143,7 +145,8 @@ def iso_1D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
                 print("Step: {0}, Delta E: {1}".format(step, delta_E))
             step += 1
     with open("iso_bh_L={0},t={1},U={2}.pkl".format(L, t, U), "wb+") as f:
-        pickle.dump([psi, M, tebd_params], f)
+        pickle.dump([Psi, info], f)
+    return(Psi, info)
 
 def iso_2D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     bh_bonds = get_bose_hubbard_bonds()
