@@ -110,7 +110,7 @@ class isotns:
             self.rotate()
         return(info)
 
-    def tebd2(self, Hs, dt, trunc_params, Nsteps):
+    def tebd2(self, Hs, dt, trunc_params, Nsteps = None, min_dE = None):
         """ Performs tebd2 ith second order Trotterization.
         Parameters
         ----------
@@ -122,19 +122,40 @@ class isotns:
         trunc_params: truncation param dict
 
         Nsteps: Number of full sweeps with rotations across peps (i.e.,
-        four sweeps back and forth)..
+        four sweeps back and forth).
+
+        min_dE: Break after the change in energy between sweeps is less than min_dE.
 
         Returns
         ---------
         info: Dict on final run
         """
+
+        if min_dE is None:
+            min_dE = np.float("inf")
+        if Nsteps is None:
+            Nsteps = np.float("inf")
+
         Uv = get_time_evol(Hs[0], dt)
         Uh = get_time_evol(Hs[1], dt)
         Uv2 = get_time_evol(Hs[0], dt / 2.) # Second order Trotter
 
-        info = self.sweep_with_rotation([Uv2, Uh, Uv, Uh], trunc_params)
-        for j in range(Nsteps):
-            info = self.sweep_with_rotation([Uv, Uh, Uv, Uh], trunc_params)
+        info = self.sweep_with_rotation([Uv2, Uh, Uv, Uh], trunc_params,
+                                        Os=[None, None, None, Hs[1]])
+        E_curr = np.sum(info["expectation_O"][3])
+        step = 0
+        dE = np.float("inf")
+
+        while step < Nsteps and np.abs(dE) < min_dE:
+            if step % 10 == 0:
+                print("Step {0}".format(step))
+            info = self.sweep_with_rotation([Uv, Uh, Uv, Uh], trunc_params,
+                                            Os = [None, None, None, Hs[1]])
+            E_prev = E_curr
+            E_curr = np.sum(info["expectation_O"][3])
+            dE = E_curr - E_prev
+            step += 1
+
         info = self.sweep_with_rotation([Uv2, None, None, None],
                                         trunc_params,
                                        Os=[None, None, Hs[0], Hs[1]])

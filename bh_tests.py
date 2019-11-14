@@ -151,18 +151,21 @@ def iso_1D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
 
 def iso_2D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     bh_bonds = get_bose_hubbard_bonds()
-    trunc_params = {"chi_max": 32, "p_trunc": 1.e-10}
+    trunc_params = {"chi_max": 6, "p_trunc": 1.e-8}
     peps = isotns(get_peps(Lx=L, Ly=L, fill=(1,8), Nmax=3), trunc_params)
-    Tstep = 1.5
-    dts = 1.5 * np.exp(-0.5 * np.arange(1,12))
+    #Tstep = 1.5
+    #dts = 1.5 * np.exp(-0.5 * np.arange(1,12))
+    dts = [0.1, 0.001, 1.e-5]
     H = get_bose_hubbard_bonds()
     Hs = [H.copy(), H.copy()]
     Es = []
+    dE = float("inf")
+    E_curr = 0.0
     for dt in dts:
-        print("Starting dt = {0}".format(dt))
-        info = peps.tebd2(Hs, dt, trunc_params, int(Tstep / dt) + 1)
-        with open("iso_bh_tebd_L={0},t={1},U={2}.pkl", "wb+") as f:
-            pickle.dump([info, peps, dt])
+        print(("Starting dt = {0}\n" + "=" * 20).format(dt))
+        info = peps.tebd2(Hs, dt, trunc_params, Nsteps = 50, min_dE = 1.e-8)
+        with open("iso_bh_tebd_L={0},t={1},U={2}.pkl".format(L, t, U), "wb+") as f:
+            pickle.dump([info, peps, dt], f)
     print("Done")
 
 def get_Psi(Ly = 8, fill = (1, 8), Nmax = 3):
