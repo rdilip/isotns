@@ -2,6 +2,7 @@ import numpy as np
 import scipy.linalg as la
 import pickle
 from tebd import tebd 
+from isotns import *
 from tenpy.networks.mps import MPS
 from tenpy.models.hubbard import BoseHubbardChain
 from tenpy.algorithms import tebd as tenpy_tebd
@@ -151,18 +152,18 @@ def iso_1D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
 def iso_2D_tebd_bose_hubbard(L = 8, t = 0.1, U = 0.14, save = True):
     bh_bonds = get_bose_hubbard_bonds()
     trunc_params = {"chi_max": 32, "p_trunc": 1.e-10}
-    peps = isotns(get_peps(Lx=L, Ly=L, fill=(1,8), Nmax=3))
+    peps = isotns(get_peps(Lx=L, Ly=L, fill=(1,8), Nmax=3), trunc_params)
     Tstep = 1.5
     dts = 1.5 * np.exp(-0.5 * np.arange(1,12))
     H = get_bose_hubbard_bonds()
     Hs = [H.copy(), H.copy()]
     Es = []
     for dt in dts:
+        print("Starting dt = {0}".format(dt))
         info = peps.tebd2(Hs, dt, trunc_params, int(Tstep / dt) + 1)
         with open("iso_bh_tebd_L={0},t={1},U={2}.pkl", "wb+") as f:
             pickle.dump([info, peps, dt])
     print("Done")
-
 
 def get_Psi(Ly = 8, fill = (1, 8), Nmax = 3):
     a, b = fill
@@ -183,3 +184,6 @@ def get_peps(Lx = 8, Ly = 8, fill = (1,8), Nmax = 3):
     for i in range(Lx):
         peps.append(get_Psi(Ly, fill=fill, Nmax=Nmax))
     return(peps)
+
+if __name__ == '__main__':
+    iso_2D_tebd_bose_hubbard()

@@ -31,7 +31,7 @@ from misc import *
 import numpy as np
 from new_splitter import split_psi
 
-def moses_move(Psi, trunc_params,  trunc_flag = False):
+def moses_move(Psi, trunc_params):
     """ Performs a moses move on Psi, starting from the bottom (i.e., the first
     element of Psi and working up. You should view Psi as an MPO before 
     doing this.
@@ -87,7 +87,7 @@ def moses_move(Psi, trunc_params,  trunc_flag = False):
                             (dL, dR),
                             dict(chi_max = etaV_max, 
                             p_trunc = trunc_params["p_trunc"]),
-                            flag =False)
+                            )
         
         errors.append(info.setdefault("error", np.nan))
         d_errors.append(info.setdefault("d_error"))

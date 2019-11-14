@@ -53,7 +53,7 @@ def get_TFI_bonds(L, J = 1.0, g = 1.0):
     return(ops)
 
 def tebd(Psi, Us = None, Os = None, trunc_params = None, reduced_update = True,
-        direct = 'R', flag = False):
+        direct = 'R'):
     """ Performs TEBD across an MPS Psi (which is a column in the PEPS).
     The MPS should start in the B form and will finish in the A form. 
 
@@ -84,20 +84,20 @@ def tebd(Psi, Us = None, Os = None, trunc_params = None, reduced_update = True,
     if trunc_params is None:
         trunc_params = {}
     if direct == 'R':
-        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update, tebd_flag = flag)
+        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update)
     else:
         Psi = mps_invert(Psi)
-        if Us is not None:
+        if Us != [None]:
             Us = operator_invert(Us)
-        if Os is not None:
+        if Os != [None]:
             Os = operator_invert(Os)
-        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update, tebd_flag=flag)
+        Psi, nrm, tebd_err, exp_vals = _tebd_sweep(Psi, Us, Os, trunc_params, reduced_update)
         exp_vals = exp_vals[::-1]
         Psi = mps_invert(Psi)
     info = dict(tebd_err = tebd_err, nrm = nrm, expectation_O = exp_vals)
     return(Psi, info)
 
-def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False):
+def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True):
     """ Main work function for sweep(). Performs a sweep from left to right
     on an MPS Psi. """
 
@@ -137,11 +137,11 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
 
 
 
-        if U is not None:
+        if U != [None]:
             theta = np.tensordot(U[oc], theta,  [[2,3],[0,2]])
         else:
             theta = theta.transpose([0, 2, 1, 3])
-        if O is not None:
+        if O != [None]:
             Otheta = np.tensordot(O[oc], theta, [[2,3], [0,1]])
             exp_vals[oc] = np.tensordot(theta.conj(), Otheta, axes=[[0,1,2,3],[0,1,2,3]])
         
@@ -173,7 +173,7 @@ def _tebd_sweep(Psi, U, O, trunc_params, reduced_update = True, tebd_flag=False)
     Psi[L - 1] = SB
     return(Psi, nrm, tebd_err, exp_vals)
 
-def peps_sweep(peps, U, trunc_params, O = None, flag = False):
+def peps_sweep(peps, U, trunc_params, O = None):
     Psi = peps[0]
     Lx = len(peps)
     Ly = len(Psi)
@@ -189,15 +189,21 @@ def peps_sweep(peps, U, trunc_params, O = None, flag = False):
                 moses_d_err = [],
                 nrm = 1.)
 
+    if U is None:
+        U = [None]
+    if O is None:
+        O = [None]
+
     for j in range(Lx):
 
 
-        
         tebd_trunc_params = dict(p_trunc = target_p_trunc,
                                  chi_max = trunc_params["chi_max"])
 
-        Psi, tebd_info = tebd(Psi, U, O, tebd_trunc_params, direct = "L", flag=False)
-
+        Psi, tebd_info = tebd(Psi, U[j % len(U)],
+                                   O[j % len(O)],
+                                   tebd_trunc_params,
+                                   direct = "L")
 
 
 
@@ -287,10 +293,9 @@ def peps_sweep_with_rotation(peps, Us, trunc_params, Os = None):
         Us = [[None]] * 4
     if Os is None:
         Os = [[None]] * 4
-    flag = False
     for i in range(4):
         print("Starting sequence {i} of full sweep".format(i=i))
-        peps, info_ = peps_sweep(peps, Us[i], trunc_params, Os[i], flag = flag)
+        peps, info_ = peps_sweep(peps, Us[i], trunc_params, Os[i])
         info["expectation_O"].append(info_["expectation_O"])
         info["tebd_err"][i] += np.sum(info_["tebd_err"])
         info["moses_err"][i] += np.sum(info_["tebd_err"])
